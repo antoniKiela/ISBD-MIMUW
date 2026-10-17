@@ -1,21 +1,43 @@
 use std::env;
 use std::fs::File;
 use std::os::unix::fs::FileExt;
+use std::time::Instant;
 
 mod hash;
 use hash::sum_block_hash;
 use hash::stretch_md5;
 
-const BLOCK_SIZE: u64 = 1024 * 1024;
-const K: u64 = 1000;
-
 fn main() {
 
     let args: Vec<String> = env::args().collect();
-    if args.len() != 2 {
-        println!("Usage: cargo run --release --bin pipeline filepath");
+    if args.len() != 4 {
+        println!("Usage: cargo run --release --bin pipeline filepath block_size k");
         return;
     }
+
+    let block_size_res = args[2].parse::<u64>();
+    if block_size_res.is_err() {
+        eprintln!("Invalid block size: {}", args[2]);
+        return;
+    }
+    let block_size = block_size_res.unwrap();
+    if block_size == 0 {
+        eprintln!("Block size must be positive");
+        return;
+    }
+
+    let k_res = args[3].parse::<u64>();
+    if k_res.is_err() {
+        eprintln!("Invalid k: {}", args[3]);
+        return;
+    }
+    let k = k_res.unwrap();
+    if k == 0 {
+        eprintln!("k must be positive");
+        return;
+    }
+
+    let start = Instant::now();
 
     let file_res = File::open(args[1].clone());
     if file_res.is_err() {
@@ -30,14 +52,14 @@ fn main() {
         return;
     }
     let total_size = metadata.unwrap().len();
-    let num_blocks = (total_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    let num_blocks = (total_size + block_size - 1) / block_size;
 
-    let mut buffer = vec![0u8; BLOCK_SIZE as usize];
+    let mut buffer = vec![0u8; block_size as usize];
     let mut result = vec![0u8; 16];
     for block_idx in 0..num_blocks
     {
-        let offset = block_idx * BLOCK_SIZE;
-        let bytes_to_read = std::cmp::min(BLOCK_SIZE, total_size - offset) as usize;
+        let offset = block_idx * block_size;
+        let bytes_to_read = std::cmp::min(block_size, total_size - offset) as usize;
 
         // read
         let target_buf = &mut buffer[..bytes_to_read];
@@ -48,9 +70,10 @@ fn main() {
         }
 
         // compute
-        let block_hash = stretch_md5(&target_buf, K);
+        let block_hash = stretch_md5(&target_buf, k);
         sum_block_hash(&mut result, &block_hash);
     }
+    eprintln!("time_ms={:.3}", start.elapsed().as_secs_f64() * 1000.0);
     print!("{} 0x", args[1].clone());
     for byte in &result {
         print!("{:02x}", byte);

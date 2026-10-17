@@ -1,6 +1,7 @@
 use std::env;
 use std::fs::File;
 use std::os::unix::fs::FileExt;
+use std::time::Instant;
 use rand::{rng, Rng, RngExt, SeedableRng};
 use rand::rngs::StdRng;
 
@@ -42,16 +43,28 @@ impl Iterator for RandomOrderIterator {
     }
 }
 
-const BLOCK_SIZE: u64 = 512;
 const RAND_SEED: u64 = 1234;
 
 fn main() {
 
     let args: Vec<String> = env::args().collect();
-    if args.len() != 2 {
-        println!("Usage: cargo run --release --bin latency filepath");
+    if args.len() != 3 {
+        println!("Usage: cargo run --release --bin latency filepath block_size");
         return;
     }
+
+    let block_size_res = args[2].parse::<u64>();
+    if block_size_res.is_err() {
+        eprintln!("Invalid block size: {}", args[2]);
+        return;
+    }
+    let block_size = block_size_res.unwrap();
+    if block_size == 0 {
+        eprintln!("Block size must be positive");
+        return;
+    }
+
+    let start = Instant::now();
 
     let file_res = File::open(args[1].clone());
     if file_res.is_err() {
@@ -66,15 +79,15 @@ fn main() {
         return;
     }
     let total_size = metadata.unwrap().len();
-    let num_blocks = (total_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    let num_blocks = (total_size + block_size - 1) / block_size;
     let random_iter = RandomOrderIterator::with_seed(num_blocks, RAND_SEED);
 
-    let mut buffer = vec![0u8; BLOCK_SIZE as usize];
+    let mut buffer = vec![0u8; block_size as usize];
     let mut result = vec![0u8; 16];
     for block_idx in random_iter
     {
-        let offset = block_idx * BLOCK_SIZE;
-        let bytes_to_read = std::cmp::min(BLOCK_SIZE, total_size - offset) as usize;
+        let offset = block_idx * block_size;
+        let bytes_to_read = std::cmp::min(block_size, total_size - offset) as usize;
 
         // read
         let target_buf = &mut buffer[..bytes_to_read];
@@ -88,6 +101,7 @@ fn main() {
         let block_hash = md5::compute(target_buf);
         sum_block_hash(&mut result, &block_hash);
     }
+    eprintln!("time_ms={:.3}", start.elapsed().as_secs_f64() * 1000.0);
     print!("{} 0x", args[1].clone());
     for byte in &result {
         print!("{:02x}", byte);
