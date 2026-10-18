@@ -8,6 +8,10 @@ name = "latency"
 path = "latency.rs"
 
 [[bin]]
+name = "latency_mt"
+path = "latency_mt.rs"
+
+[[bin]]
 name = "throughput"
 path = "throughput.rs"
 
