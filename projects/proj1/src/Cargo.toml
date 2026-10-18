@@ -16,9 +16,14 @@ name = "throughput"
 path = "throughput.rs"
 
 [[bin]]
+name = "throughput_mmap"
+path = "throughput_mmap.rs"
+
+[[bin]]
 name = "pipeline"
 path = "pipeline.rs"
 
 [dependencies]
 md5 = "0.8.1"
+memmap2 = "0.9.11"
 rand = "0.10.3"
