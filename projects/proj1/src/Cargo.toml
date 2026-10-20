@@ -23,6 +23,10 @@ path = "throughput_mmap.rs"
 name = "pipeline"
 path = "pipeline.rs"
 
+[[bin]]
+name = "pipeline_mt"
+path = "pipeline_mt.rs"
+
 [dependencies]
 md5 = "0.8.1"
 memmap2 = "0.9.11"
