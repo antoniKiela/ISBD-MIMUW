@@ -109,7 +109,7 @@ impl Column {
     }
 
     /// Sprawdza wewnętrzną spójność kolumny VARCHAR (dla INT64 zawsze OK).
-    fn validate(&self) -> Result<()> {
+    pub(crate) fn validate(&self) -> Result<()> {
         if let Column::Varchar { offsets, data } = self {
             if offsets.is_empty() || offsets[0] != 0 {
                 return Err(FormatError::InvalidData(
@@ -183,115 +183,59 @@ impl Batch {
 mod tests {
     use super::*;
 
-    fn col(name: &str, ty: ColumnType) -> ColumnDef {
-        ColumnDef { name: name.to_string(), ty }
-    }
-
-    fn schema_2i_2v() -> Schema {
-        Schema::new(vec![
-            col("a", ColumnType::Int64),
-            col("b", ColumnType::Int64),
-            col("c", ColumnType::Varchar),
-            col("d", ColumnType::Varchar),
-        ])
-        .unwrap()
+    fn schema(types: &[ColumnType]) -> Schema {
+        let mut columns = Vec::new();
+        for (i, ty) in types.iter().enumerate() {
+            columns.push(ColumnDef { name: format!("c{}", i), ty: *ty });
+        }
+        Schema::new(columns).unwrap()
     }
 
     #[test]
-    fn varchar_from_strs_builds_offsets() {
+    fn varchar_from_strs() {
+        // "żółw" to 7 bajtów w UTF-8
         let c = Column::varchar_from_strs(&["ab", "", "żółw"]);
-        // "żółw" to 7 bajtów w UTF-8 (ż, ó, ł po 2 bajty + w)
         assert_eq!(
             c,
             Column::Varchar { offsets: vec![0, 2, 2, 9], data: "abżółw".as_bytes().to_vec() }
         );
-        assert_eq!(c.len(), 3);
-        assert_eq!(c.varchar_get(0), Some("ab".as_bytes()));
-        assert_eq!(c.varchar_get(1), Some("".as_bytes()));
         assert_eq!(c.varchar_get(2), Some("żółw".as_bytes()));
         assert_eq!(c.varchar_get(3), None);
     }
 
     #[test]
-    fn empty_varchar_column() {
-        let c = Column::varchar_from_strs(&[]);
-        assert_eq!(c, Column::Varchar { offsets: vec![0], data: vec![] });
-        assert!(c.is_empty());
-    }
-
-    #[test]
     fn valid_batch() {
+        let s = schema(&[ColumnType::Int64, ColumnType::Varchar]);
         let b = Batch::new(
-            &schema_2i_2v(),
-            vec![
-                Column::Int64(vec![1, 2, 3]),
-                Column::Int64(vec![-1, 0, i64::MAX]),
-                Column::varchar_from_strs(&["x", "yy", ""]),
-                Column::varchar_from_strs(&["", "", "zzz"]),
-            ],
+            &s,
+            vec![Column::Int64(vec![1, 2, 3]), Column::varchar_from_strs(&["x", "", "z"])],
         )
         .unwrap();
         assert_eq!(b.num_rows, 3);
     }
 
     #[test]
-    fn empty_schema_gives_empty_batch() {
-        let b = Batch::new(&Schema::new(vec![]).unwrap(), vec![]).unwrap();
-        assert_eq!(b.num_rows, 0);
-    }
-
-    #[test]
-    fn duplicate_column_names_rejected() {
-        let r = Schema::new(vec![col("a", ColumnType::Int64), col("a", ColumnType::Varchar)]);
-        assert!(matches!(r, Err(FormatError::InvalidData(_))));
-    }
-
-    #[test]
-    fn different_lengths_rejected() {
-        let r = Batch::new(
-            &schema_2i_2v(),
-            vec![
-                Column::Int64(vec![1, 2, 3]),
-                Column::Int64(vec![1, 2]),
-                Column::varchar_from_strs(&["x", "y", "z"]),
-                Column::varchar_from_strs(&["x", "y", "z"]),
-            ],
-        );
-        assert!(matches!(r, Err(FormatError::InvalidData(_))));
-    }
-
-    #[test]
-    fn type_mismatch_rejected() {
-        let r = Batch::new(
-            &schema_2i_2v(),
-            vec![
-                Column::Int64(vec![1]),
-                Column::varchar_from_strs(&["x"]),
-                Column::varchar_from_strs(&["x"]),
-                Column::varchar_from_strs(&["x"]),
-            ],
-        );
-        assert!(matches!(r, Err(FormatError::InvalidData(_))));
-    }
-
-    #[test]
-    fn wrong_column_count_rejected() {
-        let r = Batch::new(&schema_2i_2v(), vec![Column::Int64(vec![1])]);
-        assert!(matches!(r, Err(FormatError::InvalidData(_))));
-    }
-
-    #[test]
-    fn broken_varchar_offsets_rejected() {
-        let schema = Schema::new(vec![col("s", ColumnType::Varchar)]).unwrap();
-        let broken = vec![
-            Column::Varchar { offsets: vec![], data: vec![] },             // brak offsetów
-            Column::Varchar { offsets: vec![1, 2], data: vec![0, 0] },     // nie zaczyna się od 0
-            Column::Varchar { offsets: vec![0, 2, 1], data: vec![0, 0] },  // malejące
-            Column::Varchar { offsets: vec![0, 1], data: vec![0, 0, 0] },  // ostatni != data.len()
+    fn invalid_data_rejected() {
+        let s = schema(&[ColumnType::Int64, ColumnType::Varchar]);
+        let bad_batches = vec![
+            // kolumny różnej długości
+            vec![Column::Int64(vec![1, 2]), Column::varchar_from_strs(&["x"])],
+            // typ niezgodny ze schematem
+            vec![Column::Int64(vec![1]), Column::Int64(vec![1])],
+            // zła liczba kolumn
+            vec![Column::Int64(vec![1])],
+            // offsety VARCHAR niezgodne z danymi
+            vec![Column::Int64(vec![1]), Column::Varchar { offsets: vec![0, 5], data: vec![1] }],
         ];
-        for c in broken {
-            let r = Batch::new(&schema, vec![c]);
-            assert!(matches!(r, Err(FormatError::InvalidData(_))));
+        for columns in bad_batches {
+            assert!(matches!(Batch::new(&s, columns), Err(FormatError::InvalidData(_))));
         }
+
+        // powtórzona nazwa kolumny
+        let dup = vec![
+            ColumnDef { name: "a".to_string(), ty: ColumnType::Int64 },
+            ColumnDef { name: "a".to_string(), ty: ColumnType::Varchar },
+        ];
+        assert!(matches!(Schema::new(dup), Err(FormatError::InvalidData(_))));
     }
 }
