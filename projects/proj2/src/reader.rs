@@ -1,0 +1,1 @@
+// FileReader – deserializator formatu BIGOS.

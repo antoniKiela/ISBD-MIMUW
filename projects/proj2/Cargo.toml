@@ -1,0 +1,10 @@
+[package]
+name = "bigos"
+version = "0.1.0"
+edition = "2024"
+
+# Biblioteka: src/lib.rs (format BIGOS, reprezentacja w pamięci, metryki).
+# Programy: src/bin/*.rs – cargo sam znajduje je jako osobne binarki.
+
+[dependencies]
+zstd = "0.14.3"

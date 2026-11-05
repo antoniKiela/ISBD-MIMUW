@@ -1,0 +1,1 @@
+// FileWriter – serializator formatu BIGOS.
