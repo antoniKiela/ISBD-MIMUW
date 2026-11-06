@@ -143,40 +143,46 @@ pub struct Batch {
 impl Batch {
     /// Tworzy batch zgodny ze schematem: ta sama liczba i typy kolumn, kolumny równej długości.
     pub fn new(schema: &Schema, columns: Vec<Column>) -> Result<Batch> {
-        if columns.len() != schema.columns.len() {
-            return Err(FormatError::InvalidData(format!(
-                "schemat ma {} kolumn, a podano {}",
-                schema.columns.len(),
-                columns.len()
-            )));
-        }
-
-        let mut num_rows = 0;
-        for (i, col) in columns.iter().enumerate() {
-            let def = &schema.columns[i];
-            if col.column_type() != def.ty {
-                return Err(FormatError::InvalidData(format!(
-                    "kolumna '{}' ma typ {:?}, a podano {:?}",
-                    def.name,
-                    def.ty,
-                    col.column_type()
-                )));
-            }
-            col.validate()?;
-            if i == 0 {
-                num_rows = col.len();
-            } else if col.len() != num_rows {
-                return Err(FormatError::InvalidData(format!(
-                    "kolumna '{}' ma {} wierszy, a pierwsza kolumna {}",
-                    def.name,
-                    col.len(),
-                    num_rows
-                )));
-            }
-        }
-
+        let num_rows = check_columns(schema, &columns)?;
         Ok(Batch { num_rows, columns })
     }
+}
+
+/// Sprawdza, że kolumny pasują do schematu (liczba, typy, poprawne offsety VARCHAR)
+/// i mają równą długość. Zwraca liczbę wierszy.
+pub(crate) fn check_columns(schema: &Schema, columns: &[Column]) -> Result<usize> {
+    if columns.len() != schema.columns.len() {
+        return Err(FormatError::InvalidData(format!(
+            "schemat ma {} kolumn, a podano {}",
+            schema.columns.len(),
+            columns.len()
+        )));
+    }
+
+    let mut num_rows = 0;
+    for (i, col) in columns.iter().enumerate() {
+        let def = &schema.columns[i];
+        if col.column_type() != def.ty {
+            return Err(FormatError::InvalidData(format!(
+                "kolumna '{}' ma typ {:?}, a podano {:?}",
+                def.name,
+                def.ty,
+                col.column_type()
+            )));
+        }
+        col.validate()?;
+        if i == 0 {
+            num_rows = col.len();
+        } else if col.len() != num_rows {
+            return Err(FormatError::InvalidData(format!(
+                "kolumna '{}' ma {} wierszy, a pierwsza kolumna {}",
+                def.name,
+                col.len(),
+                num_rows
+            )));
+        }
+    }
+    Ok(num_rows)
 }
 
 #[cfg(test)]
