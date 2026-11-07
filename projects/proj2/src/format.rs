@@ -7,6 +7,7 @@
 //   FOOTER : schemat + położenie każdego chunka (opis w `writer::encode_footer`)
 //   TAIL   : długość stopki: u32 LE | "BIGOS"                 (9 B)
 
+use crate::error::{FormatError, Result};
 use crate::types::ColumnType;
 
 /// Magia na początku i na końcu pliku.
@@ -23,6 +24,15 @@ pub fn column_type_to_byte(ty: ColumnType) -> u8 {
     match ty {
         ColumnType::Int64 => 0,
         ColumnType::Varchar => 1,
+    }
+}
+
+/// Odwrotność `column_type_to_byte`; nieznany bajt oznacza uszkodzony plik.
+pub fn column_type_from_byte(b: u8) -> Result<ColumnType> {
+    match b {
+        0 => Ok(ColumnType::Int64),
+        1 => Ok(ColumnType::Varchar),
+        _ => Err(FormatError::Corrupted(format!("nieznany typ kolumny {}", b))),
     }
 }
 
