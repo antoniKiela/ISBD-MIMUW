@@ -24,6 +24,7 @@ pub fn column_type_to_byte(ty: ColumnType) -> u8 {
     match ty {
         ColumnType::Int64 => 0,
         ColumnType::Varchar => 1,
+        ColumnType::Bool => 2,
     }
 }
 
@@ -32,6 +33,7 @@ pub fn column_type_from_byte(b: u8) -> Result<ColumnType> {
     match b {
         0 => Ok(ColumnType::Int64),
         1 => Ok(ColumnType::Varchar),
+        2 => Ok(ColumnType::Bool),
         _ => Err(FormatError::Corrupted(format!("nieznany typ kolumny {}", b))),
     }
 }

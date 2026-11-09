@@ -13,6 +13,7 @@ use crate::error::{FormatError, Result};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColumnType {
     Int64,
+    Bool,
     Varchar,
 }
 
@@ -50,6 +51,7 @@ impl Schema {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Column {
     Int64(Vec<i64>),
+    Bool(Vec<bool>),
     /// `offsets.len()` == liczba wierszy + 1, `offsets[0] == 0`, ostatni offset == `data.len()`.
     Varchar { offsets: Vec<u64>, data: Vec<u8> },
 }
@@ -71,6 +73,7 @@ impl Column {
     pub fn column_type(&self) -> ColumnType {
         match self {
             Column::Int64(_) => ColumnType::Int64,
+            Column::Bool(_) => ColumnType::Bool,
             Column::Varchar { .. } => ColumnType::Varchar,
         }
     }
@@ -79,6 +82,7 @@ impl Column {
     pub fn len(&self) -> usize {
         match self {
             Column::Int64(values) => values.len(),
+            Column::Bool(values) => values.len(),
             Column::Varchar { offsets, .. } => {
                 if offsets.is_empty() {
                     0
@@ -104,7 +108,7 @@ impl Column {
                 let end = offsets[i + 1] as usize;
                 data.get(start..end)
             }
-            Column::Int64(_) => None,
+            _ => None,
         }
     }
 

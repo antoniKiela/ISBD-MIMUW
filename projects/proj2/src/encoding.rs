@@ -5,6 +5,7 @@
 // - ZSTD    – ogólna kompresja bajtów, używana dla kolumn VARCHAR.
 //
 // Chunk INT64   = VLE(zigzag(delta[0])) … VLE(zigzag(delta[n-1]))
+// Chunk BOOLEAN = 1 bit na wartość, 8 wartości na bajt (najmłodszy bit pierwszy)
 // Chunk VARCHAR = ZSTD( VLE(len[0]) … VLE(len[n-1]) ++ sklejone bajty wszystkich napisów )
 
 use crate::error::{FormatError, Result};
@@ -81,12 +82,18 @@ pub struct EncodedChunk {
     pub raw_size: u64,
 }
 
-/// Koduje kolumnę (INT64: delta + zigzag + VLE, VARCHAR: długości VLE + bajty, całość ZSTD).
+/// Koduje kolumnę (INT64: delta + zigzag + VLE, BOOLEAN: 1 bit na wartość,
+/// VARCHAR: długości VLE + bajty, całość ZSTD).
 pub fn encode_column(col: &Column) -> Result<EncodedChunk> {
     col.validate()?;
     match col {
         Column::Int64(values) => {
             let bytes = encode_int64(values);
+            let raw_size = bytes.len() as u64;
+            Ok(EncodedChunk { bytes, raw_size })
+        }
+        Column::Bool(values) => {
+            let bytes = encode_bool(values);
             let raw_size = bytes.len() as u64;
             Ok(EncodedChunk { bytes, raw_size })
         }
@@ -96,15 +103,15 @@ pub fn encode_column(col: &Column) -> Result<EncodedChunk> {
 
 /// Dekoduje chunk o typie `ty`, który powinien zawierać dokładnie `count` wartości.
 pub fn decode_column(ty: ColumnType, bytes: &[u8], count: usize, raw_size: u64) -> Result<Column> {
+    // INT64 i BOOLEAN nie są kompresowane, więc rozmiar przed kompresją = rozmiar chunka.
+    if ty != ColumnType::Varchar && raw_size != bytes.len() as u64 {
+        return Err(FormatError::Corrupted(
+            "dla INT64 i BOOLEAN raw_size musi być równy rozmiarowi chunka".to_string(),
+        ));
+    }
     match ty {
-        ColumnType::Int64 => {
-            if raw_size != bytes.len() as u64 {
-                return Err(FormatError::Corrupted(
-                    "dla INT64 raw_size musi być równy rozmiarowi chunka".to_string(),
-                ));
-            }
-            Ok(Column::Int64(decode_int64(bytes, count)?))
-        }
+        ColumnType::Int64 => Ok(Column::Int64(decode_int64(bytes, count)?)),
+        ColumnType::Bool => Ok(Column::Bool(decode_bool(bytes, count)?)),
         ColumnType::Varchar => decode_varchar(bytes, count, raw_size),
     }
 }
@@ -143,6 +150,37 @@ fn decode_int64(bytes: &[u8], count: usize) -> Result<Vec<i64>> {
     }
     if pos != bytes.len() {
         return Err(FormatError::Corrupted("nadmiarowe bajty w chunku INT64".to_string()));
+    }
+    Ok(values)
+}
+
+fn encode_bool(values: &[bool]) -> Vec<u8> {
+    // Wartość i trafia do bajtu i / 8, na bit i % 8; nieużywane bity ostatniego bajtu zostają zerami.
+    let mut out = vec![0u8; values.len().div_ceil(8)];
+    for (i, &v) in values.iter().enumerate() {
+        if v {
+            out[i / 8] |= 1 << (i % 8);
+        }
+    }
+    out
+}
+
+fn decode_bool(bytes: &[u8], count: usize) -> Result<Vec<bool>> {
+    if bytes.len() != count.div_ceil(8) {
+        return Err(FormatError::Corrupted(format!(
+            "chunk BOOLEAN ma {} B, a dla {} wartości powinien mieć {} B",
+            bytes.len(),
+            count,
+            count.div_ceil(8)
+        )));
+    }
+    let mut values = Vec::with_capacity(count);
+    for i in 0..count {
+        values.push(bytes[i / 8] & (1 << (i % 8)) != 0);
+    }
+    // Bity za ostatnią wartością muszą być zerami.
+    if !count.is_multiple_of(8) && bytes[count / 8] >> (count % 8) != 0 {
+        return Err(FormatError::Corrupted("niezerowe bity dopełnienia w chunku BOOLEAN".to_string()));
     }
     Ok(values)
 }

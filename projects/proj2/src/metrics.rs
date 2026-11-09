@@ -1,5 +1,6 @@
 // Metryki kolumn liczone strumieniowo, batch po batchu:
 // - INT64   – średnia arytmetyczna wartości,
+// - BOOLEAN – entropia binarna H(p), gdzie p to odsetek wartości true,
 // - VARCHAR – liczba znaków ASCII (bajtów < 0x80) we wszystkich napisach.
 //
 // Trzymamy tylko akumulatory (sumę i licznik), a nie dane, więc pamięć nie zależy
@@ -13,6 +14,7 @@ use crate::types::{Batch, Column, ColumnType, Schema};
 pub enum ColumnMetric {
     /// Suma w i128 – suma wielu wartości i64 łatwo przekracza zakres i64.
     Int64Average { sum: i128, count: u64 },
+    BoolEntropy { trues: u64, count: u64 },
     VarcharAscii { ascii_chars: u64 },
 }
 
@@ -27,6 +29,7 @@ impl Metrics {
         for def in &schema.columns {
             columns.push(match def.ty {
                 ColumnType::Int64 => ColumnMetric::Int64Average { sum: 0, count: 0 },
+                ColumnType::Bool => ColumnMetric::BoolEntropy { trues: 0, count: 0 },
                 ColumnType::Varchar => ColumnMetric::VarcharAscii { ascii_chars: 0 },
             });
         }
@@ -53,6 +56,14 @@ impl Metrics {
                     *sum += batch_sum;
                     *count += values.len() as u64;
                 }
+                (ColumnMetric::BoolEntropy { trues, count }, Column::Bool(values)) => {
+                    for &v in values {
+                        if v {
+                            *trues += 1;
+                        }
+                    }
+                    *count += values.len() as u64;
+                }
                 (ColumnMetric::VarcharAscii { ascii_chars }, Column::Varchar { data, .. }) => {
                     // `data` zawiera dokładnie wszystkie napisy kolumny, sklejone.
                     let mut n: u64 = 0;
@@ -75,6 +86,7 @@ impl Metrics {
 
     /// Wynik w formacie tekstowym, jedna linia na kolumnę:
     ///   <nazwa> INT64 avg=<średnia z 6 miejscami po przecinku albo NULL dla 0 wierszy>
+    ///   <nazwa> BOOLEAN entropy=<entropia z 6 miejscami po przecinku albo NULL dla 0 wierszy>
     ///   <nazwa> VARCHAR ascii_chars=<liczba>
     pub fn report(&self, schema: &Schema) -> String {
         let mut out = String::new();
@@ -88,6 +100,14 @@ impl Metrics {
                         out.push_str(&format!("{} INT64 avg={:.6}\n", def.name, avg));
                     }
                 }
+                ColumnMetric::BoolEntropy { trues, count } => {
+                    if *count == 0 {
+                        out.push_str(&format!("{} BOOLEAN entropy=NULL\n", def.name));
+                    } else {
+                        let p = *trues as f64 / *count as f64;
+                        out.push_str(&format!("{} BOOLEAN entropy={:.6}\n", def.name, binary_entropy(p)));
+                    }
+                }
                 ColumnMetric::VarcharAscii { ascii_chars } => {
                     out.push_str(&format!("{} VARCHAR ascii_chars={}\n", def.name, ascii_chars));
                 }
@@ -95,6 +115,18 @@ impl Metrics {
         }
         out
     }
+}
+
+/// H(p) = −p·log₂p − (1−p)·log₂(1−p), przyjmując 0·log₂0 = 0.
+fn binary_entropy(p: f64) -> f64 {
+    let mut h = 0.0;
+    if p > 0.0 {
+        h -= p * p.log2();
+    }
+    if p < 1.0 {
+        h -= (1.0 - p) * (1.0 - p).log2();
+    }
+    h
 }
 
 #[cfg(test)]
