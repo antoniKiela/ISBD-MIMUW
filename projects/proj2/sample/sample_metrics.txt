@@ -1,4 +1,4 @@
 id INT64 avg=9999.500000
-value INT64 avg=-202.289550
+flag BOOLEAN entropy=0.885827
 name VARCHAR ascii_chars=113259
 comment VARCHAR ascii_chars=598483

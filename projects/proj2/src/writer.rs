@@ -16,7 +16,7 @@ use std::path::Path;
 use crate::encoding::{encode_column, write_vle};
 use crate::error::{FormatError, Result};
 use crate::format::{column_type_to_byte, ChunkMeta, RowGroupMeta, HEADER_LEN, MAGIC, VERSION};
-use crate::types::{check_columns, Batch, Schema};
+use crate::types::{check_columns, Batch, Schema, BATCH_SIZE};
 
 pub struct FileWriter {
     out: BufWriter<File>,
@@ -40,13 +40,19 @@ impl FileWriter {
         &self.schema
     }
 
-    /// Zapisuje batch jako jedną grupę wierszy. Pusty batch jest pomijany.
+    /// Zapisuje batch (maks. `BATCH_SIZE` wierszy) jako jedną grupę wierszy. Pusty batch jest pomijany.
     pub fn write_batch(&mut self, batch: &Batch) -> Result<()> {
         let num_rows = check_columns(&self.schema, &batch.columns)?;
         if num_rows != batch.num_rows {
             return Err(FormatError::InvalidData(format!(
                 "batch deklaruje {} wierszy, a kolumny mają {}",
                 batch.num_rows, num_rows
+            )));
+        }
+        if num_rows > BATCH_SIZE {
+            return Err(FormatError::InvalidData(format!(
+                "batch ma {} wierszy, a maksimum to {}",
+                num_rows, BATCH_SIZE
             )));
         }
         if num_rows == 0 {

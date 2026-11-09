@@ -20,7 +20,7 @@ use crate::error::{FormatError, Result};
 use crate::format::{
     column_type_from_byte, ChunkMeta, RowGroupMeta, HEADER_LEN, MAGIC, TAIL_LEN, VERSION,
 };
-use crate::types::{Batch, ColumnDef, Schema};
+use crate::types::{Batch, ColumnDef, Schema, BATCH_SIZE};
 
 pub struct FileReader {
     file: File,
@@ -150,6 +150,12 @@ fn parse_footer(buf: &[u8], footer_start: u64) -> Result<(Schema, Vec<RowGroupMe
     let mut row_groups = Vec::new();
     for _ in 0..num_row_groups {
         let row_count = read_vle(buf, &mut pos)?;
+        if row_count > BATCH_SIZE as u64 {
+            return Err(FormatError::Corrupted(format!(
+                "grupa wierszy ma {} wierszy, a maksimum to {}",
+                row_count, BATCH_SIZE
+            )));
+        }
         let mut chunks = Vec::with_capacity(schema.columns.len());
         for _ in 0..schema.columns.len() {
             let offset = read_u64_le(buf, &mut pos)?;

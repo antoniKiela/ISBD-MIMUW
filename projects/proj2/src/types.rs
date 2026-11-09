@@ -2,12 +2,16 @@
 //
 // Dane są trzymane kolumnowo w ciągłych tablicach:
 // - INT64   – jeden `Vec<i64>`,
+// - BOOLEAN – jeden `Vec<bool>`,
 // - VARCHAR – wszystkie napisy sklejone w jednym `Vec<u8>` (`data`) oraz `Vec<u64>` z pozycjami
 //             początków (`offsets`); napis i to `data[offsets[i]..offsets[i + 1]]`.
 // Dzięki temu pętle po kolumnie czytają pamięć sekwencyjnie (dobrze dla cache i SIMD),
 // a kolumna napisów to dwie alokacje zamiast jednej na każdy napis.
 
 use crate::error::{FormatError, Result};
+
+/// Maksymalna liczba wierszy w jednym batchu (i w jednej grupie wierszy w pliku).
+pub const BATCH_SIZE: usize = 1024;
 
 /// Typ kolumny.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,6 +99,43 @@ impl Column {
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    /// Wartość i-tego wiersza; `None`, gdy kolumna nie jest INT64 albo `i` jest poza zakresem.
+    pub fn get_i64(&self, i: usize) -> Option<i64> {
+        match self {
+            Column::Int64(values) => values.get(i).copied(),
+            _ => None,
+        }
+    }
+
+    /// Wartość i-tego wiersza; `None`, gdy kolumna nie jest BOOLEAN albo `i` jest poza zakresem.
+    pub fn get_bool(&self, i: usize) -> Option<bool> {
+        match self {
+            Column::Bool(values) => values.get(i).copied(),
+            _ => None,
+        }
+    }
+
+    /// Przykładowa operacja na wierszach: nowa kolumna VARCHAR, w której wiersz i to s1[i] ++ s2[i].
+    pub fn concat_varchar(s1: &Column, s2: &Column) -> Result<Column> {
+        if s1.len() != s2.len() {
+            return Err(FormatError::InvalidData("kolumny różnej długości".to_string()));
+        }
+        let mut offsets = Vec::with_capacity(s1.len() + 1);
+        let mut data = Vec::new();
+        offsets.push(0);
+        for i in 0..s1.len() {
+            let (Some(a), Some(b)) = (s1.varchar_get(i), s2.varchar_get(i)) else {
+                return Err(FormatError::InvalidData(
+                    "concat_varchar wymaga dwóch poprawnych kolumn VARCHAR".to_string(),
+                ));
+            };
+            data.extend_from_slice(a);
+            data.extend_from_slice(b);
+            offsets.push(data.len() as u64);
+        }
+        Ok(Column::Varchar { offsets, data })
     }
 
     /// Bajty i-tego napisu; `None`, gdy kolumna nie jest VARCHAR albo `i` jest poza zakresem.

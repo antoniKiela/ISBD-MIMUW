@@ -1,10 +1,12 @@
 // Generuje plik .bgs z deterministycznymi danymi testowymi o schemacie:
 //   id      INT64   – 0, 1, 2, … (stała delta = 1, koduje się na 1 bajcie)
-//   value   INT64   – losowe z zakresu -1 000 000 ..= 1 000 000
+//   flag    BOOLEAN – losowe, true z prawdopodobieństwem 0,3
 //   name    VARCHAR – losowe słowo ze słownika (część słów z polskimi znakami)
 //   comment VARCHAR – losowy napis ASCII długości 0..=60 (także pusty)
 //
-// Wywołanie: bgs_gen <wyjście.bgs> <liczba_wierszy> [ziarno=42] [rozmiar_grupy=65536]
+// Dane są zapisywane w grupach po BATCH_SIZE wierszy.
+//
+// Wywołanie: bgs_gen <wyjście.bgs> <liczba_wierszy> [ziarno=42]
 
 use std::env;
 use std::path::Path;
@@ -12,7 +14,7 @@ use std::process;
 
 use bigos::error::Result;
 use bigos::rng::Rng;
-use bigos::types::{Batch, Column, ColumnDef, ColumnType, Schema};
+use bigos::types::{Batch, Column, ColumnDef, ColumnType, Schema, BATCH_SIZE};
 use bigos::writer::FileWriter;
 
 const WORDS: [&str; 24] = [
@@ -25,24 +27,20 @@ const COMMENT_CHARS: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVW
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    if args.len() < 3 || args.len() > 5 {
+    if args.len() < 3 || args.len() > 4 {
         usage();
     }
     let rows = parse_arg(&args, 2, 0);
     let seed = parse_arg(&args, 3, 42);
-    let group_size = parse_arg(&args, 4, 65536);
-    if group_size == 0 {
-        usage();
-    }
 
-    if let Err(e) = run(Path::new(&args[1]), rows, seed, group_size) {
+    if let Err(e) = run(Path::new(&args[1]), rows, seed) {
         eprintln!("bgs_gen: {}", e);
         process::exit(1);
     }
 }
 
 fn usage() -> ! {
-    eprintln!("Usage: bgs_gen <wyjście.bgs> <liczba_wierszy> [ziarno=42] [rozmiar_grupy=65536]");
+    eprintln!("Usage: bgs_gen <wyjście.bgs> <liczba_wierszy> [ziarno=42]");
     process::exit(1);
 }
 
@@ -57,10 +55,10 @@ fn parse_arg(args: &[String], i: usize, default: u64) -> u64 {
     }
 }
 
-fn run(path: &Path, rows: u64, seed: u64, group_size: u64) -> Result<()> {
+fn run(path: &Path, rows: u64, seed: u64) -> Result<()> {
     let schema = Schema::new(vec![
         ColumnDef { name: "id".to_string(), ty: ColumnType::Int64 },
-        ColumnDef { name: "value".to_string(), ty: ColumnType::Int64 },
+        ColumnDef { name: "flag".to_string(), ty: ColumnType::Bool },
         ColumnDef { name: "name".to_string(), ty: ColumnType::Varchar },
         ColumnDef { name: "comment".to_string(), ty: ColumnType::Varchar },
     ])?;
@@ -69,15 +67,15 @@ fn run(path: &Path, rows: u64, seed: u64, group_size: u64) -> Result<()> {
 
     let mut written: u64 = 0;
     while written < rows {
-        let n = (rows - written).min(group_size) as usize;
+        let n = (rows - written).min(BATCH_SIZE as u64) as usize;
 
         let mut ids = Vec::with_capacity(n);
-        let mut values = Vec::with_capacity(n);
+        let mut flags = Vec::with_capacity(n);
         let mut names = VarcharBuilder::new();
         let mut comments = VarcharBuilder::new();
         for j in 0..n {
             ids.push((written + j as u64) as i64);
-            values.push(rng.range_i64(-1_000_000, 1_000_000));
+            flags.push(rng.below(10) < 3);
             names.push(WORDS[rng.below(WORDS.len() as u64) as usize].as_bytes());
 
             let len = rng.below(61) as usize;
@@ -90,7 +88,7 @@ fn run(path: &Path, rows: u64, seed: u64, group_size: u64) -> Result<()> {
 
         let batch = Batch::new(
             &schema,
-            vec![Column::Int64(ids), Column::Int64(values), names.finish(), comments.finish()],
+            vec![Column::Int64(ids), Column::Bool(flags), names.finish(), comments.finish()],
         )?;
         writer.write_batch(&batch)?;
         written += n as u64;
